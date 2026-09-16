@@ -9,7 +9,7 @@ def extract_reviews(url):
     reviews_text = []
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        page = browser.new_page(locale="fr-FR")
         page.goto(url)
         time.sleep(3) # Wait for page to load
 
@@ -90,10 +90,19 @@ def generate_pitch(reviews, note=None, count=None):
     if leave_issues:
         issues_found.append("des difficultés lors des périodes de congés")
 
-    if issues_found:
-        issues_str = " et ".join([", ".join(issues_found[:-1]), issues_found[-1]] if len(issues_found) > 1 else issues_found)
-        pitch += f"Nous avons remarqué que vos patients mentionnent régulièrement {issues_str}. "
-        pitch += "Notre solution globale Alaxione, avec son **agenda intelligent** et **SecrétarIA**, peut vous aider à résoudre ces problématiques de manière automatisée, afin de libérer du temps médical et d'optimiser l'organisation du cabinet."
+    try:
+        note_float = float(str(note).replace(',', '.')) if note is not None else 5.0
+    except ValueError:
+        note_float = 5.0
+
+    is_low_rating = note_float < 3.5
+
+    if issues_found or is_low_rating:
+        if issues_found:
+            issues_str = " et ".join([", ".join(issues_found[:-1]), issues_found[-1]] if len(issues_found) > 1 else issues_found)
+            pitch += f"Nous avons remarqué que vos patients mentionnent régulièrement {issues_str}. "
+
+        pitch += "Pour faire face à la dégradation de votre e-réputation et à la tension au cabinet avec des patients mécontents, il est nécessaire de s'appuyer sur **SecrétarIA** et un **agenda optimisé** pour apaiser la relation patient."
     else:
         pitch += "Bien que vos patients semblent globalement satisfaits de votre pratique, la gestion quotidienne peut toujours être optimisée. Les solutions Alaxione (agenda intelligent, SecrétarIA) peuvent vous faire gagner un temps administratif précieux au quotidien."
 
