@@ -7,9 +7,12 @@ import sys
 
 def extract_reviews(url):
     reviews_text = []
+    reviews_dates = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(locale="fr-FR")
+        # Forcer le français avec locale et args
+        browser = p.chromium.launch(headless=True, args=['--lang=fr-FR'])
+        context = browser.new_context(locale="fr-FR")
+        page = context.new_page()
         page.goto(url)
         time.sleep(3) # Wait for page to load
 
@@ -39,7 +42,7 @@ def extract_reviews(url):
 
         # Scroll to load more reviews
         for _ in range(5):
-            review_elements = page.query_selector_all('.wiI7pd')
+            review_elements = page.query_selector_all('.jftiEf')
             if review_elements:
                 try:
                     review_elements[-1].scroll_into_view_if_needed()
@@ -48,16 +51,65 @@ def extract_reviews(url):
             time.sleep(1)
 
         # Extract text from reviews (up to 20)
-        review_elements = page.query_selector_all('.wiI7pd')
+        review_elements = page.query_selector_all('.jftiEf')
         for el in review_elements[:20]:
-            reviews_text.append(el.inner_text())
+            text_el = el.query_selector('.wiI7pd')
+            date_el = el.query_selector('.rsqaWe')
 
-        if not reviews_text:
-            # Fallback: extract all text
-            reviews_text.append(page.inner_text('body'))
+            # We want to skip reviews without text for pitch generation
+            if text_el:
+                reviews_text.append(text_el.inner_text())
+                if date_el:
+                    reviews_dates.append(date_el.inner_text())
+                else:
+                    reviews_dates.append("Date inconnue")
 
         browser.close()
-    return reviews_text
+    return reviews_text, reviews_dates
+
+import re
+
+def calculate_frequency(dates_str):
+    max_months = 0
+    count = len(dates_str)
+
+    if count == 0:
+        return "Pas assez de données pour calculer la fréquence."
+
+    for d in dates_str:
+        d = d.lower()
+        months = 0
+        if "jour" in d or "heure" in d or "minute" in d:
+            months = 0
+        elif "semaine" in d:
+            num = re.search(r'\d+', d)
+            val = int(num.group()) if num else 1
+            months = val / 4.0
+        elif "mois" in d:
+            num = re.search(r'\d+', d)
+            val = int(num.group()) if num else 1
+            months = val
+        elif "an" in d or "année" in d or "annee" in d:
+            if "un " in d or "une " in d:
+                val = 1
+            else:
+                num = re.search(r'\d+', d)
+                val = int(num.group()) if num else 1
+            months = val * 12
+
+        if months > max_months:
+            max_months = months
+
+    if max_months == 0:
+        return "Fréquence très élevée (plusieurs avis très récents)."
+
+    avg_per_month = count / max_months
+    if avg_per_month >= 1:
+        return f"environ {avg_per_month:.1f} avis par mois"
+    else:
+        avg_per_year = avg_per_month * 12
+        return f"environ {avg_per_year:.1f} avis par an"
+
 
 def generate_pitch(reviews, note=None, count=None):
     pitch = "Argumentaire Commercial :\n\n"
@@ -161,8 +213,13 @@ if uploaded_file is not None:
                 with st.spinner('Extraction des avis Google Maps en cours (Playwright headless)...'):
                     try:
                         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-                        reviews = extract_reviews(url)
+                        reviews, review_dates = extract_reviews(url)
                         st.success("Extraction terminée avec succès !")
+
+                        # Affichage de la fréquence des avis
+                        if review_dates:
+                            freq_text = calculate_frequency(review_dates)
+                            st.metric("Fréquence des avis récents", freq_text)
 
                         st.subheader("💡 Argumentaire généré")
                         reviews_text_joined = " ".join(reviews)
@@ -174,8 +231,8 @@ if uploaded_file is not None:
                         st.info(pitch)
 
                         with st.expander("Voir le contenu brut extrait"):
-                            for i, review in enumerate(reviews):
-                                st.markdown(f"**Avis {i+1} :**")
+                            for i, (review, date) in enumerate(zip(reviews, review_dates)):
+                                st.markdown(f"**Avis {i+1}** - *{date}*")
                                 st.write(review)
                                 st.divider()
                     except Exception as e:
