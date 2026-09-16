@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from playwright.sync_api import sync_playwright
 import time
+import subprocess
+import sys
 
 def extract_reviews(url):
     reviews_text = []
@@ -107,6 +109,7 @@ if uploaded_file is not None:
             if st.button("Lancer l'extraction et générer l'argumentaire", type="primary"):
                 with st.spinner('Extraction des avis Google Maps en cours (Playwright headless)...'):
                     try:
+                        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
                         reviews = extract_reviews(url)
                         st.success("Extraction terminée avec succès !")
 
