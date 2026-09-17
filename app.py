@@ -9,54 +9,71 @@ def extract_reviews(url):
     reviews_text = []
     reviews_dates = []
     with sync_playwright() as p:
-        # Forcer le français avec locale et args
-        browser = p.chromium.launch(headless=True, args=['--lang=fr-FR'])
-        context = browser.new_context(locale="fr-FR")
+        browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
+        context = browser.new_context(
+            locale="fr-FR",
+            viewport={'width': 1920, 'height': 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
         page.goto(url)
-        time.sleep(3) # Wait for page to load
+        time.sleep(3)
 
-        # Try to accept cookies
         try:
-            page.get_by_role("button", name="Tout accepter").click(timeout=2000)
+            page.locator('button:has-text("Tout accepter")').first.click(timeout=5000)
         except:
             pass
 
-        try:
-            page.get_by_role("button", name="Accept all").click(timeout=2000)
-        except:
-            pass
+        time.sleep(3)
 
-        # Try to click on reviews tab
-        try:
-            page.get_by_role("tab", name="Avis").click(timeout=3000)
-            time.sleep(2)
-        except:
-            pass
+        tabs = page.locator('button[role="tab"]')
+        for i in range(tabs.count()):
+            try:
+                text = tabs.nth(i).inner_text().strip()
+                if text == 'Avis' or text == 'Reviews' or 'avis' in text.lower():
+                    tabs.nth(i).click()
+                    break
+            except:
+                pass
 
-        try:
-            page.get_by_role("tab", name="Reviews").click(timeout=3000)
-            time.sleep(2)
-        except:
-            pass
+        time.sleep(3)
 
-        # Scroll to load more reviews
         for _ in range(5):
-            review_elements = page.query_selector_all('.jftiEf')
-            if review_elements:
-                try:
-                    review_elements[-1].scroll_into_view_if_needed()
-                except:
-                    pass
-            time.sleep(1)
+            try:
+                page.evaluate('''
+                    () => {
+                        const container = document.querySelector('div.m6QErb.DxyBCb');
+                        if (container) {
+                            container.scrollTop = container.scrollHeight;
+                            container.dispatchEvent(new Event('scroll'));
+                        } else {
+                            let elements2 = document.querySelectorAll('.m6QErb');
+                            for (let el of elements2) {
+                                if (el.scrollHeight > el.clientHeight) {
+                                    el.scrollTop = el.scrollHeight;
+                                    el.dispatchEvent(new Event('scroll'));
+                                }
+                            }
+                        }
+                    }
+                ''')
+            except:
+                pass
+            time.sleep(2)
 
-        # Extract text from reviews (up to 20)
+        try:
+            more_buttons = page.locator('button.w8nwRe.kyuRq')
+            for i in range(more_buttons.count()):
+                more_buttons.nth(i).click()
+                time.sleep(0.5)
+        except:
+            pass
+
         review_elements = page.query_selector_all('.jftiEf')
         for el in review_elements[:20]:
             text_el = el.query_selector('.wiI7pd')
             date_el = el.query_selector('.rsqaWe')
 
-            # We want to skip reviews without text for pitch generation
             if text_el:
                 reviews_text.append(text_el.inner_text())
                 if date_el:
