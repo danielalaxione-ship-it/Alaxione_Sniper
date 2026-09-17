@@ -4,8 +4,16 @@ from playwright.sync_api import sync_playwright
 import time
 import subprocess
 import sys
+import urllib.parse
 
 def extract_reviews(url):
+    parsed = urllib.parse.urlparse(url)
+    query = urllib.parse.parse_qs(parsed.query)
+    query['hl'] = ['fr']
+    query['gl'] = ['FR']
+    new_query = urllib.parse.urlencode(query, doseq=True)
+    url = parsed._replace(query=new_query).geturl()
+
     reviews_text = []
     reviews_dates = []
     reviews_responses = []
@@ -84,70 +92,76 @@ def extract_reviews(url):
             pass
         # ----------------------------------------
 
-        tabs = page.locator('button[role="tab"]')
-        for i in range(tabs.count()):
-            try:
-                text = tabs.nth(i).inner_text().strip()
-                if text == 'Avis' or text == 'Reviews' or 'avis' in text.lower():
-                    tabs.nth(i).click()
-                    break
-            except:
-                pass
+        try:
+            page.wait_for_selector('button[role="tab"]', timeout=5000)
+            tabs = page.locator('button[role="tab"]')
+            for i in range(tabs.count()):
+                try:
+                    text = tabs.nth(i).inner_text().strip().lower()
+                    if 'avis' in text or 'reviews' in text:
+                        tabs.nth(i).click()
+                        break
+                except:
+                    pass
 
-        time.sleep(3)
+            time.sleep(3)
 
-        for _ in range(5):
-            try:
-                page.evaluate('''
-                    () => {
-                        const container = document.querySelector('div.m6QErb.DxyBCb');
-                        if (container) {
-                            container.scrollTop = container.scrollHeight;
-                            container.dispatchEvent(new Event('scroll'));
-                        } else {
-                            let elements2 = document.querySelectorAll('.m6QErb');
-                            for (let el of elements2) {
-                                if (el.scrollHeight > el.clientHeight) {
-                                    el.scrollTop = el.scrollHeight;
-                                    el.dispatchEvent(new Event('scroll'));
+            for _ in range(5):
+                try:
+                    page.evaluate('''
+                        () => {
+                            const container = document.querySelector('div.m6QErb.DxyBCb');
+                            if (container) {
+                                container.scrollTop = container.scrollHeight;
+                                container.dispatchEvent(new Event('scroll'));
+                            } else {
+                                let elements2 = document.querySelectorAll('.m6QErb');
+                                for (let el of elements2) {
+                                    if (el.scrollHeight > el.clientHeight) {
+                                        el.scrollTop = el.scrollHeight;
+                                        el.dispatchEvent(new Event('scroll'));
+                                    }
                                 }
                             }
                         }
-                    }
-                ''')
+                    ''')
+                except:
+                    pass
+                time.sleep(2)
+
+            try:
+                more_buttons = page.locator('button.w8nwRe.kyuRq')
+                for i in range(more_buttons.count()):
+                    more_buttons.nth(i).click()
+                    time.sleep(0.5)
             except:
                 pass
-            time.sleep(2)
 
-        try:
-            more_buttons = page.locator('button.w8nwRe.kyuRq')
-            for i in range(more_buttons.count()):
-                more_buttons.nth(i).click()
-                time.sleep(0.5)
-        except:
-            pass
+            review_elements = page.query_selector_all('.jftiEf')
+            for el in review_elements[:20]:
+                text_el = el.query_selector('.wiI7pd')
+                date_el = el.query_selector('.rsqaWe')
 
-        review_elements = page.query_selector_all('.jftiEf')
-        for el in review_elements[:20]:
-            text_el = el.query_selector('.wiI7pd')
-            date_el = el.query_selector('.rsqaWe')
-
-            response_el = el.query_selector('.CDe7pd')
-            has_response = False
-            if response_el:
-                has_response = True
-            else:
-                inner = el.inner_text()
-                if "Réponse du propriétaire" in inner or "Réponse de" in inner:
+                response_el = el.query_selector('.CDe7pd')
+                has_response = False
+                if response_el:
                     has_response = True
-
-            if text_el:
-                reviews_text.append(text_el.inner_text())
-                if date_el:
-                    reviews_dates.append(date_el.inner_text())
                 else:
-                    reviews_dates.append("Date inconnue")
-                reviews_responses.append(has_response)
+                    inner = el.inner_text()
+                    if "Réponse du propriétaire" in inner or "Réponse de" in inner:
+                        has_response = True
+
+                if text_el:
+                    reviews_text.append(text_el.inner_text())
+                    if date_el:
+                        reviews_dates.append(date_el.inner_text())
+                    else:
+                        reviews_dates.append("Date inconnue")
+                    reviews_responses.append(has_response)
+        except Exception as e:
+            # En cas de problème avec le panneau des avis (aucun avis ou structure changée),
+            # on l'ignore silencieusement pour retourner des listes vides
+            pass
 
         browser.close()
     return reviews_text, reviews_dates, reviews_responses, gmb_data
