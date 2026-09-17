@@ -8,6 +8,15 @@ import sys
 def extract_reviews(url):
     reviews_text = []
     reviews_dates = []
+    reviews_responses = []
+    gmb_data = {
+        "website": "Absent",
+        "hours": "Incomplets ou absents",
+        "phone": "Absent",
+        "category": "Générique",
+        "appointment": "Absent",
+        "title": "Nom propre"
+    }
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
         context = browser.new_context(
@@ -25,6 +34,55 @@ def extract_reviews(url):
             pass
 
         time.sleep(3)
+
+        # --- GMB Technical Audit Extraction ---
+        try:
+            # 1. Title (Nom de la fiche)
+            title_el = page.locator('h1.DUwDvf')
+            if title_el.count() > 0:
+                title_text = title_el.first.inner_text().strip()
+                if len(title_text.split()) > 4 or "-" in title_text or "|" in title_text:
+                    gmb_data["title"] = "Suroptimisé avec mots-clés"
+                else:
+                    gmb_data["title"] = "Nom propre"
+
+            # 2. Category
+            category_btn = page.locator('button.DkEaL')
+            if category_btn.count() > 0:
+                cat_text = category_btn.first.inner_text().strip()
+                if cat_text:
+                    gmb_data["category"] = "Précisée"
+
+            # 3. Phone
+            phone_btn = page.locator('button[data-tooltip*="téléphone"], button[data-tooltip*="phone"], button[data-item-id^="phone:"]')
+            if phone_btn.count() > 0:
+                gmb_data["phone"] = "Présent"
+
+            # 4. Website
+            website_btn = page.locator('a[data-item-id="authority"]')
+            if website_btn.count() > 0:
+                gmb_data["website"] = "Présent"
+
+            # 5. Appointment link
+            links = page.locator('a')
+            for i in range(links.count()):
+                try:
+                    href = links.nth(i).get_attribute("href")
+                    if href and any(domain in href.lower() for domain in ["doctolib", "maiia", "keldoc", "rdv", "rendez-vous"]):
+                        gmb_data["appointment"] = "Présent"
+                        break
+                except:
+                    pass
+
+            # 6. Hours
+            if page.locator('div[aria-label*="ouvert"]').count() > 0 or \
+               page.locator('div[aria-label*="fermé"]').count() > 0 or \
+               page.locator('div[aria-label*="Horaires"]').count() > 0 or \
+               page.locator('div.OqCjIf[data-item-id="oh"]').count() > 0:
+                gmb_data["hours"] = "Complets"
+        except:
+            pass
+        # ----------------------------------------
 
         tabs = page.locator('button[role="tab"]')
         for i in range(tabs.count()):
@@ -74,15 +132,25 @@ def extract_reviews(url):
             text_el = el.query_selector('.wiI7pd')
             date_el = el.query_selector('.rsqaWe')
 
+            response_el = el.query_selector('.CDe7pd')
+            has_response = False
+            if response_el:
+                has_response = True
+            else:
+                inner = el.inner_text()
+                if "Réponse du propriétaire" in inner or "Réponse de" in inner:
+                    has_response = True
+
             if text_el:
                 reviews_text.append(text_el.inner_text())
                 if date_el:
                     reviews_dates.append(date_el.inner_text())
                 else:
                     reviews_dates.append("Date inconnue")
+                reviews_responses.append(has_response)
 
         browser.close()
-    return reviews_text, reviews_dates
+    return reviews_text, reviews_dates, reviews_responses, gmb_data
 
 import re
 
@@ -123,6 +191,9 @@ def calculate_frequency(dates_str):
     avg_per_month = count / max_months
     if avg_per_month >= 1:
         return f"environ {avg_per_month:.1f} avis par mois"
+    elif avg_per_month >= 0.25:
+        avg_per_quarter = avg_per_month * 3
+        return f"environ {avg_per_quarter:.1f} avis par trimestre"
     else:
         avg_per_year = avg_per_month * 12
         return f"environ {avg_per_year:.1f} avis par an"
@@ -199,26 +270,14 @@ def generate_pitch(reviews_list, note=None, count=None):
 
     pitch += "\n"
 
-    try:
-        note_float = float(str(note).replace(',', '.')) if note is not None else 5.0
-    except ValueError:
-        note_float = 5.0
-
-    is_low_rating = note_float < 3.5
-
-    if stats_found or is_low_rating:
-        pitch += "Face à ces retours et pour améliorer votre e-réputation tout en réduisant la tension au cabinet, il est recommandé de s'appuyer sur **SecrétarIA** et un **agenda optimisé** pour apaiser la relation patient."
-    else:
-        pitch += "Vos patients semblent globalement satisfaits. Néanmoins, l'optimisation de la gestion quotidienne avec les solutions Alaxione (agenda intelligent, SecrétarIA) peut vous faire gagner un temps administratif précieux."
-
     return pitch
 
 st.set_page_config(page_title="Sniper d'Avis", layout="wide")
-st.title("🎯 Sniper d'Avis - Générateur d'argumentaire commercial")
+st.title("🎯 Sniper d'Avis - Outil d'Audit Factuel et Technique")
 
 st.markdown("""
 Cette application vous permet d'importer une liste de médecins, d'analyser leurs avis Google Maps en temps réel,
-et de générer un argumentaire commercial sur mesure axé sur les problèmes récurrents (ex: temps d'attente, secrétariat injoignable).
+et de générer un audit factuel et technique (taux de réponse, indicateurs GMB, analyse des points de douleur).
 """)
 
 uploaded_file = st.file_uploader("Importez votre fichier CSV de leads", type=['csv'])
@@ -262,17 +321,44 @@ if uploaded_file is not None:
 
             st.write(f"**URL à analyser :** {url}")
 
-            if st.button("Lancer l'extraction et générer l'argumentaire", type="primary"):
+            if st.button("Lancer l'extraction et générer l'audit", type="primary"):
                 with st.spinner('Extraction des avis Google Maps en cours (Playwright headless)...'):
                     try:
                         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-                        reviews, review_dates = extract_reviews(url)
+                        reviews, review_dates, review_responses, gmb_data = extract_reviews(url)
                         st.success("Extraction terminée avec succès !")
 
-                        # Affichage de la fréquence des avis
-                        if review_dates:
-                            freq_text = calculate_frequency(review_dates)
-                            st.metric("Fréquence des avis", freq_text)
+                        # Taux de réponse
+                        if review_responses:
+                            nb_responses = sum(review_responses)
+                            total_extracted = len(review_responses)
+                            response_rate = (nb_responses / total_extracted) * 100
+                            response_text = f"Oui ({response_rate:.0f}%)" if response_rate > 0 else "Non"
+                        else:
+                            response_text = "N/A"
+
+                        # Affichage de la fréquence des avis et Taux de réponse
+                        col_freq, col_resp = st.columns(2)
+                        with col_freq:
+                            if review_dates:
+                                freq_text = calculate_frequency(review_dates)
+                                st.metric("Fréquence des avis", freq_text)
+                        with col_resp:
+                            st.metric("Taux de réponse du praticien", response_text)
+
+                        st.subheader("📋 Audit Technique GMB")
+                        gmb_df = pd.DataFrame({
+                            "Indicateur": ["Site Web", "Horaires complets", "Numéro de téléphone", "Spécialité / Catégorie principale", "Lien de prise de rendez-vous (ex: Doctolib)", "Nom de la fiche"],
+                            "Statut": [
+                                gmb_data.get("website", "Absent"),
+                                gmb_data.get("hours", "Incomplets ou absents"),
+                                gmb_data.get("phone", "Absent"),
+                                gmb_data.get("category", "Générique"),
+                                gmb_data.get("appointment", "Absent"),
+                                gmb_data.get("title", "Nom propre")
+                            ]
+                        })
+                        st.table(gmb_df)
 
                         st.subheader("📊 Analyse des Tendances")
 
