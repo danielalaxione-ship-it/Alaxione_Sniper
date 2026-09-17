@@ -101,7 +101,7 @@ def calculate_frequency(dates_str):
             max_months = months
 
     if max_months == 0:
-        return "Fréquence très élevée (plusieurs avis très récents)."
+        return "plusieurs avis très récents"
 
     avg_per_month = count / max_months
     if avg_per_month >= 1:
@@ -111,36 +111,76 @@ def calculate_frequency(dates_str):
         return f"environ {avg_per_year:.1f} avis par an"
 
 
-def generate_pitch(reviews, note=None, count=None):
-    pitch = "Argumentaire Commercial :\n\n"
+def generate_pitch(reviews_list, note=None, count=None):
+    pitch = "Analyse des Tendances :\n\n"
 
     if note and count:
-        pitch += f"Avec une note de {note}/5 sur {count} avis, votre réputation en ligne reflète votre activité.\n\n"
+        pitch += f"Avec une note de {note}/5 sur {count} avis, voici l'analyse des points de douleur soulevés par vos patients.\n\n"
     elif note:
-        pitch += f"Avec une note de {note}/5, votre réputation en ligne est importante.\n\n"
+        pitch += f"Avec une note de {note}/5, voici l'analyse des points de douleur soulevés par vos patients.\n\n"
     elif count:
-        pitch += f"Avec {count} avis au total, vous avez une forte visibilité en ligne.\n\n"
+        pitch += f"Avec {count} avis au total, voici l'analyse des points de douleur soulevés par vos patients.\n\n"
+    else:
+        pitch += f"Voici l'analyse des points de douleur soulevés par vos patients.\n\n"
 
-    reviews_lower = reviews.lower()
+    if not reviews_list:
+        pitch += "Aucun avis textuel n'a pu être extrait pour l'analyse.\n"
+        return pitch
 
-    phone_issues = any(keyword in reviews_lower for keyword in ['téléphone', 'telephone', 'joindre', 'répond pas', 'repond pas', 'raccroche', 'standard', 'secrétariat', 'appel'])
-    wait_issues = any(keyword in reviews_lower for keyword in ['attente', 'retard', 'heures', 'attendre', 'long', 'patience'])
-    cancel_issues = any(keyword in reviews_lower for keyword in ['annule', 'annulation', 'annulé', 'dernière minute'])
-    planning_issues = any(keyword in reviews_lower for keyword in ['planning', 'rendez-vous', 'rdv', 'date', 'créneau'])
-    leave_issues = any(keyword in reviews_lower for keyword in ['congé', 'conge', 'vacances', 'remplaçant', 'absence'])
+    total_reviews = len(reviews_list)
+    phone_issues_count = 0
+    wait_issues_count = 0
+    cancel_issues_count = 0
+    planning_issues_count = 0
+    leave_issues_count = 0
 
-    issues_found = []
+    phone_keywords = ['téléphone', 'telephone', 'joindre', 'répond pas', 'repond pas', 'raccroche', 'standard', 'secrétariat', 'appel']
+    wait_keywords = ['attente', 'retard', 'heures', 'attendre', 'long', 'patience']
+    cancel_keywords = ['annule', 'annulation', 'annulé', 'dernière minute']
+    planning_keywords = ['planning', 'rendez-vous', 'rdv', 'date', 'créneau']
+    leave_keywords = ['congé', 'conge', 'vacances', 'remplaçant', 'absence']
 
-    if wait_issues:
-        issues_found.append("du temps d'attente important")
-    if phone_issues:
-        issues_found.append("de la difficulté à joindre le cabinet")
-    if cancel_issues:
-        issues_found.append("des annulations de dernière minute")
-    if planning_issues:
-        issues_found.append("des problèmes de gestion de planning")
-    if leave_issues:
-        issues_found.append("des difficultés lors des périodes de congés")
+    for review in reviews_list:
+        rev_lower = review.lower()
+        if any(keyword in rev_lower for keyword in phone_keywords):
+            phone_issues_count += 1
+        if any(keyword in rev_lower for keyword in wait_keywords):
+            wait_issues_count += 1
+        if any(keyword in rev_lower for keyword in cancel_keywords):
+            cancel_issues_count += 1
+        if any(keyword in rev_lower for keyword in planning_keywords):
+            planning_issues_count += 1
+        if any(keyword in rev_lower for keyword in leave_keywords):
+            leave_issues_count += 1
+
+    stats_found = False
+
+    if wait_issues_count > 0:
+        pct = int((wait_issues_count / total_reviews) * 100)
+        pitch += f"- **{pct}%** des avis signalent des problèmes de retard ou de temps d'attente.\n"
+        stats_found = True
+
+    if phone_issues_count > 0:
+        pct = int((phone_issues_count / total_reviews) * 100)
+        pitch += f"- **{pct}%** des avis signalent des difficultés à joindre le secrétariat par téléphone.\n"
+        stats_found = True
+
+    if planning_issues_count > 0:
+        pct = int((planning_issues_count / total_reviews) * 100)
+        pitch += f"- **{pct}%** des avis signalent des problèmes liés à la gestion du planning (rendez-vous, créneaux).\n"
+        stats_found = True
+
+    if cancel_issues_count > 0:
+        pct = int((cancel_issues_count / total_reviews) * 100)
+        pitch += f"- **{pct}%** des avis mentionnent des annulations (parfois de dernière minute).\n"
+        stats_found = True
+
+    if leave_issues_count > 0:
+        pct = int((leave_issues_count / total_reviews) * 100)
+        pitch += f"- **{pct}%** des avis signalent des difficultés lors des périodes de congés ou d'absence.\n"
+        stats_found = True
+
+    pitch += "\n"
 
     try:
         note_float = float(str(note).replace(',', '.')) if note is not None else 5.0
@@ -149,14 +189,10 @@ def generate_pitch(reviews, note=None, count=None):
 
     is_low_rating = note_float < 3.5
 
-    if issues_found or is_low_rating:
-        if issues_found:
-            issues_str = " et ".join([", ".join(issues_found[:-1]), issues_found[-1]] if len(issues_found) > 1 else issues_found)
-            pitch += f"Nous avons remarqué que vos patients mentionnent régulièrement {issues_str}. "
-
-        pitch += "Pour faire face à la dégradation de votre e-réputation et à la tension au cabinet avec des patients mécontents, il est nécessaire de s'appuyer sur **SecrétarIA** et un **agenda optimisé** pour apaiser la relation patient."
+    if stats_found or is_low_rating:
+        pitch += "Face à ces retours et pour améliorer votre e-réputation tout en réduisant la tension au cabinet, il est recommandé de s'appuyer sur **SecrétarIA** et un **agenda optimisé** pour apaiser la relation patient."
     else:
-        pitch += "Bien que vos patients semblent globalement satisfaits de votre pratique, la gestion quotidienne peut toujours être optimisée. Les solutions Alaxione (agenda intelligent, SecrétarIA) peuvent vous faire gagner un temps administratif précieux au quotidien."
+        pitch += "Vos patients semblent globalement satisfaits. Néanmoins, l'optimisation de la gestion quotidienne avec les solutions Alaxione (agenda intelligent, SecrétarIA) peut vous faire gagner un temps administratif précieux."
 
     return pitch
 
@@ -219,22 +255,16 @@ if uploaded_file is not None:
                         # Affichage de la fréquence des avis
                         if review_dates:
                             freq_text = calculate_frequency(review_dates)
-                            st.metric("Fréquence des avis récents", freq_text)
+                            st.metric("Fréquence des avis", freq_text)
 
-                        st.subheader("💡 Argumentaire généré")
-                        reviews_text_joined = " ".join(reviews)
+                        st.subheader("📊 Analyse des Tendances")
 
                         note = selected_row[note_col] if note_col and pd.notna(selected_row[note_col]) else None
                         count = selected_row[avis_col] if avis_col and pd.notna(selected_row[avis_col]) else None
 
-                        pitch = generate_pitch(reviews_text_joined, note=note, count=count)
+                        pitch = generate_pitch(reviews, note=note, count=count)
                         st.info(pitch)
 
-                        with st.expander("Voir le contenu brut extrait"):
-                            for i, (review, date) in enumerate(zip(reviews, review_dates)):
-                                st.markdown(f"**Avis {i+1}** - *{date}*")
-                                st.write(review)
-                                st.divider()
                     except Exception as e:
                         st.error(f"Une erreur s'est produite lors de l'extraction via Playwright : {str(e)}")
 
