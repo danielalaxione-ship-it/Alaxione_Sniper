@@ -7,7 +7,7 @@ import subprocess
 import sys
 import urllib.parse
 
-def extract_reviews(url):
+def extract_reviews(url, browser=None):
     parsed = urllib.parse.urlparse(url)
     query = urllib.parse.parse_qs(parsed.query)
     query['hl'] = ['fr']
@@ -30,14 +30,20 @@ def extract_reviews(url):
         }
 
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
-                context = browser.new_context(
-                    locale="fr-FR",
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-                )
-                page = context.new_page()
+            p = None
+            local_browser = browser
+            if local_browser is None:
+                p = sync_playwright().start()
+                local_browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
+
+            context = local_browser.new_context(
+                locale="fr-FR",
+                viewport={'width': 1920, 'height': 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
+
+            try:
                 page.goto(base_url, wait_until='domcontentloaded', timeout=60000)
 
                 try:
@@ -192,7 +198,12 @@ def extract_reviews(url):
                 except Exception as e:
                     pass
 
-                browser.close()
+            finally:
+                page.close()
+                context.close()
+                if browser is None:
+                    local_browser.close()
+                    p.stop()
 
             # Check if extraction was successful to break the retry loop
             if len(reviews_text) > 0:
@@ -451,62 +462,68 @@ if uploaded_file is not None:
 
                     total_rows = len(df)
 
-                    for idx, row in df.iterrows():
-                        i = idx + 1
-                        prospect_name = row[name_col] if name_col and pd.notna(row[name_col]) else f"Index {idx}"
-                        status_text.text(f"Traitement : {prospect_name} ({i}/{total_rows})...")
-
-                        url = row['URL_Google_Maps']
-                        if pd.isna(url) or not isinstance(url, str):
-                            df.at[idx, "Sniper_Resume_Audit"] = "Erreur : URL manquante ou invalide"
-                            progress_bar.progress(i / total_rows)
-                            continue
-
+                    with sync_playwright() as p:
+                        browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
                         try:
-                            reviews, review_dates, review_responses, gmb_data = extract_reviews(url)
+                            for idx, row in df.iterrows():
+                                i = idx + 1
+                                prospect_name = row[name_col] if name_col and pd.notna(row[name_col]) else f"Index {idx}"
+                                status_text.text(f"Traitement : {prospect_name} ({i}/{total_rows})...")
+                                st.write(f"Traitement de {prospect_name} ({i}/{total_rows})...")
 
-                            # Note Globale & Volume Avis
-                            note = row[note_col] if note_col and pd.notna(row[note_col]) else None
-                            count = row[avis_col] if avis_col and pd.notna(row[avis_col]) else None
-                            df.at[idx, "Sniper_Note_Globale"] = str(note) if note else "N/A"
-                            df.at[idx, "Sniper_Volume_Avis"] = str(count) if count else "N/A"
+                                url = row['URL_Google_Maps']
+                                if pd.isna(url) or not isinstance(url, str):
+                                    df.at[idx, "Sniper_Resume_Audit"] = "Erreur : URL manquante ou invalide"
+                                    progress_bar.progress(i / total_rows)
+                                    continue
 
-                            # Fréquence
-                            freq_text = "N/A"
-                            if review_dates:
-                                freq_text = calculate_frequency(review_dates)
-                            df.at[idx, "Sniper_Frequence"] = freq_text
+                                try:
+                                    reviews, review_dates, review_responses, gmb_data = extract_reviews(url, browser=browser)
 
-                            # Taux de réponse
-                            if review_responses:
-                                nb_responses = sum(review_responses)
-                                total_extracted = len(review_responses)
-                                response_rate = (nb_responses / total_extracted) * 100
-                                response_text = f"Oui ({response_rate:.0f}%)" if response_rate > 0 else "Non"
-                            else:
-                                response_text = "N/A"
-                            df.at[idx, "Sniper_Taux_Reponse"] = response_text
+                                    # Note Globale & Volume Avis
+                                    note = row[note_col] if note_col and pd.notna(row[note_col]) else None
+                                    count = row[avis_col] if avis_col and pd.notna(row[avis_col]) else None
+                                    df.at[idx, "Sniper_Note_Globale"] = str(note) if note else "N/A"
+                                    df.at[idx, "Sniper_Volume_Avis"] = str(count) if count else "N/A"
 
-                            # Pitch / Pain Point
-                            pitch = generate_pitch(reviews, note=note, count=count)
-                            pitch_clean = pitch.replace('\n', ' ').replace('\r', '')
-                            df.at[idx, "Sniper_Top_Pain_Point"] = pitch_clean
+                                    # Fréquence
+                                    freq_text = "N/A"
+                                    if review_dates:
+                                        freq_text = calculate_frequency(review_dates)
+                                    df.at[idx, "Sniper_Frequence"] = freq_text
 
-                            # Audit Resume
-                            audit_resume = f"Site: {gmb_data.get('website', 'N/A')} | Horaires: {gmb_data.get('hours', 'N/A')} | Tel: {gmb_data.get('phone', 'N/A')} | Cat: {gmb_data.get('category', 'N/A')} | RDV: {gmb_data.get('appointment', 'N/A')} | Nom: {gmb_data.get('title', 'N/A')}"
-                            df.at[idx, "Sniper_Resume_Audit"] = audit_resume.replace('\n', ' ').replace('\r', '')
+                                    # Taux de réponse
+                                    if review_responses:
+                                        nb_responses = sum(review_responses)
+                                        total_extracted = len(review_responses)
+                                        response_rate = (nb_responses / total_extracted) * 100
+                                        response_text = f"Oui ({response_rate:.0f}%)" if response_rate > 0 else "Non"
+                                    else:
+                                        response_text = "N/A"
+                                    df.at[idx, "Sniper_Taux_Reponse"] = response_text
 
-                        except Exception as e:
-                            df.at[idx, "Sniper_Note_Globale"] = "Erreur"
-                            df.at[idx, "Sniper_Volume_Avis"] = "Erreur"
-                            df.at[idx, "Sniper_Frequence"] = "Erreur"
-                            df.at[idx, "Sniper_Taux_Reponse"] = "Erreur"
-                            df.at[idx, "Sniper_Top_Pain_Point"] = "Erreur"
-                            df.at[idx, "Sniper_Resume_Audit"] = "Erreur"
-                            # Continue to next prospect
+                                    # Pitch / Pain Point
+                                    pitch = generate_pitch(reviews, note=note, count=count)
+                                    pitch_clean = pitch.replace('\n', ' ').replace('\r', '')
+                                    df.at[idx, "Sniper_Top_Pain_Point"] = pitch_clean
 
-                        progress_bar.progress(i / total_rows)
-                        time.sleep(0.5)
+                                    # Audit Resume
+                                    audit_resume = f"Site: {gmb_data.get('website', 'N/A')} | Horaires: {gmb_data.get('hours', 'N/A')} | Tel: {gmb_data.get('phone', 'N/A')} | Cat: {gmb_data.get('category', 'N/A')} | RDV: {gmb_data.get('appointment', 'N/A')} | Nom: {gmb_data.get('title', 'N/A')}"
+                                    df.at[idx, "Sniper_Resume_Audit"] = audit_resume.replace('\n', ' ').replace('\r', '')
+
+                                except Exception as e:
+                                    df.at[idx, "Sniper_Note_Globale"] = "Erreur"
+                                    df.at[idx, "Sniper_Volume_Avis"] = "Erreur"
+                                    df.at[idx, "Sniper_Frequence"] = "Erreur"
+                                    df.at[idx, "Sniper_Taux_Reponse"] = "Erreur"
+                                    df.at[idx, "Sniper_Top_Pain_Point"] = "Erreur"
+                                    df.at[idx, "Sniper_Resume_Audit"] = "Erreur"
+                                    # Continue to next prospect
+
+                                progress_bar.progress(i / total_rows)
+                                time.sleep(0.5)
+                        finally:
+                            browser.close()
 
                     status_text.text("Traitement terminé !")
                     st.success("Analyse en masse terminée !")
