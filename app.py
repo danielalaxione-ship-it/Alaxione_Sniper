@@ -5,6 +5,7 @@ import time
 import subprocess
 import sys
 import urllib.parse
+import re
 
 def extract_reviews(url):
     parsed = urllib.parse.urlparse(url)
@@ -100,7 +101,9 @@ def extract_reviews(url):
                     tabs = page.locator('button[role="tab"]').all()
                     found_avis = False
                     for t in tabs:
-                        if 'avis' in t.inner_text().lower() or 'reviews' in t.inner_text().lower():
+                        tab_text = t.inner_text().strip().lower()
+                        # Use bilingual regex to robustly find the reviews tab
+                        if re.search(r'\b(avis|reviews)\b', tab_text):
                             t.click()
                             found_avis = True
                             time.sleep(2)
