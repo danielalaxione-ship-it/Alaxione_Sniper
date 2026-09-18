@@ -294,6 +294,8 @@ Cette application vous permet d'importer une liste de médecins, d'analyser leur
 et de générer un audit factuel et technique (taux de réponse, indicateurs GMB, analyse des points de douleur).
 """)
 
+mode = st.radio("Choisissez le mode d'analyse :", ["Analyse Unitaire", "Analyse en Masse (Fichier CSV)"])
+
 uploaded_file = st.file_uploader("Importez votre fichier CSV de leads", type=['csv'])
 
 if uploaded_file is not None:
@@ -303,6 +305,9 @@ if uploaded_file is not None:
         if 'URL_Google_Maps' not in df.columns:
             st.error("Le fichier CSV doit impérativement contenir une colonne nommée 'URL_Google_Maps'.")
         else:
+            # Sécurisation : retirer les doublons sur l'URL
+            df = df.drop_duplicates(subset=['URL_Google_Maps']).reset_index(drop=True)
+
             # Cherche une colonne pour le nom du médecin
             name_col = None
             for col in ['Nom', 'nom', 'Name', 'name', 'Docteur', 'Médecin', 'Medecin']:
@@ -310,80 +315,172 @@ if uploaded_file is not None:
                     name_col = col
                     break
 
-            if name_col:
-                # Création du selectbox avec les noms
-                options = df[name_col].astype(str).tolist()
-                selected_option = st.selectbox("Sélectionnez un médecin", options)
-                selected_row = df[df[name_col].astype(str) == selected_option].iloc[0]
-            else:
-                # Création du selectbox avec les index
-                options = df.index.tolist()
-                selected_option = st.selectbox("Sélectionnez un médecin (par index)", options)
-                selected_row = df.iloc[selected_option]
-
-            url = selected_row['URL_Google_Maps']
-
             # Find Note and Nombre d'avis columns
             note_col = next((col for col in df.columns if col.lower() in ['note', 'rating', 'note_google', 'google_note']), None)
             avis_col = next((col for col in df.columns if 'avis' in col.lower() or 'reviews' in col.lower()), None)
 
-            col1, col2 = st.columns(2)
-            if note_col and pd.notna(selected_row[note_col]):
-                col1.metric("Note Google", str(selected_row[note_col]))
-            if avis_col and pd.notna(selected_row[avis_col]):
-                col2.metric("Nombre total d'avis", str(selected_row[avis_col]))
+            if mode == "Analyse Unitaire":
+                if name_col:
+                    # Création du selectbox avec les noms
+                    options = df[name_col].astype(str).tolist()
+                    selected_option = st.selectbox("Sélectionnez un médecin", options)
+                    selected_row = df[df[name_col].astype(str) == selected_option].iloc[0]
+                else:
+                    # Création du selectbox avec les index
+                    options = df.index.tolist()
+                    selected_option = st.selectbox("Sélectionnez un médecin (par index)", options)
+                    selected_row = df.iloc[selected_option]
 
-            st.write(f"**URL à analyser :** {url}")
+                url = selected_row['URL_Google_Maps']
 
-            if st.button("Lancer l'extraction et générer l'audit", type="primary"):
-                with st.spinner('Extraction des avis Google Maps en cours (Playwright headless)...'):
+                col1, col2 = st.columns(2)
+                if note_col and pd.notna(selected_row[note_col]):
+                    col1.metric("Note Google", str(selected_row[note_col]))
+                if avis_col and pd.notna(selected_row[avis_col]):
+                    col2.metric("Nombre total d'avis", str(selected_row[avis_col]))
+
+                st.write(f"**URL à analyser :** {url}")
+
+                if st.button("Lancer l'extraction et générer l'audit", type="primary"):
+                    with st.spinner('Extraction des avis Google Maps en cours (Playwright headless)...'):
+                        try:
+                            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+                            reviews, review_dates, review_responses, gmb_data = extract_reviews(url)
+                            st.success("Extraction terminée avec succès !")
+
+                            # Taux de réponse
+                            if review_responses:
+                                nb_responses = sum(review_responses)
+                                total_extracted = len(review_responses)
+                                response_rate = (nb_responses / total_extracted) * 100
+                                response_text = f"Oui ({response_rate:.0f}%)" if response_rate > 0 else "Non"
+                            else:
+                                response_text = "N/A"
+
+                            # Affichage de la fréquence des avis et Taux de réponse
+                            col_freq, col_resp = st.columns(2)
+                            with col_freq:
+                                if review_dates:
+                                    freq_text = calculate_frequency(review_dates)
+                                    st.metric("Fréquence des avis", freq_text)
+                            with col_resp:
+                                st.metric("Taux de réponse du praticien", response_text)
+
+                            st.subheader("📋 Audit Technique GMB")
+                            gmb_df = pd.DataFrame({
+                                "Indicateur": ["Site Web", "Horaires complets", "Numéro de téléphone", "Spécialité / Catégorie principale", "Lien de prise de rendez-vous (ex: Doctolib)", "Nom de la fiche"],
+                                "Statut": [
+                                    gmb_data.get("website", "Absent"),
+                                    gmb_data.get("hours", "Incomplets ou absents"),
+                                    gmb_data.get("phone", "Absent"),
+                                    gmb_data.get("category", "Générique"),
+                                    gmb_data.get("appointment", "Absent"),
+                                    gmb_data.get("title", "Nom propre")
+                                ]
+                            })
+                            st.table(gmb_df)
+
+                            st.subheader("📊 Analyse des Tendances")
+
+                            note = selected_row[note_col] if note_col and pd.notna(selected_row[note_col]) else None
+                            count = selected_row[avis_col] if avis_col and pd.notna(selected_row[avis_col]) else None
+
+                            pitch = generate_pitch(reviews, note=note, count=count)
+                            st.info(pitch)
+
+                        except Exception as e:
+                            st.error(f"Une erreur s'est produite lors de l'extraction via Playwright : {str(e)}")
+
+            else:  # Analyse en Masse
+                st.write(f"**Nombre de prospects à analyser :** {len(df)}")
+
+                if st.button("Lancer l'analyse en masse", type="primary"):
                     try:
-                        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-                        reviews, review_dates, review_responses, gmb_data = extract_reviews(url)
-                        st.success("Extraction terminée avec succès !")
+                        with st.spinner('Installation des dépendances navigateur...'):
+                            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+                    except Exception as e:
+                        st.error(f"Erreur d'installation de Playwright : {e}")
 
-                        # Taux de réponse
-                        if review_responses:
-                            nb_responses = sum(review_responses)
-                            total_extracted = len(review_responses)
-                            response_rate = (nb_responses / total_extracted) * 100
-                            response_text = f"Oui ({response_rate:.0f}%)" if response_rate > 0 else "Non"
-                        else:
-                            response_text = "N/A"
+                    # Initialize new columns
+                    df["Sniper_Note_Globale"] = ""
+                    df["Sniper_Volume_Avis"] = ""
+                    df["Sniper_Frequence"] = ""
+                    df["Sniper_Taux_Reponse"] = ""
+                    df["Sniper_Top_Pain_Point"] = ""
+                    df["Sniper_Resume_Audit"] = ""
 
-                        # Affichage de la fréquence des avis et Taux de réponse
-                        col_freq, col_resp = st.columns(2)
-                        with col_freq:
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+
+                    total_rows = len(df)
+
+                    for idx, row in df.iterrows():
+                        i = idx + 1
+                        prospect_name = row[name_col] if name_col and pd.notna(row[name_col]) else f"Index {idx}"
+                        status_text.text(f"Traitement : {prospect_name} ({i}/{total_rows})...")
+
+                        url = row['URL_Google_Maps']
+                        if pd.isna(url) or not isinstance(url, str):
+                            df.at[idx, "Sniper_Resume_Audit"] = "Erreur : URL manquante ou invalide"
+                            progress_bar.progress(i / total_rows)
+                            continue
+
+                        try:
+                            reviews, review_dates, review_responses, gmb_data = extract_reviews(url)
+
+                            # Note Globale & Volume Avis
+                            note = row[note_col] if note_col and pd.notna(row[note_col]) else None
+                            count = row[avis_col] if avis_col and pd.notna(row[avis_col]) else None
+                            df.at[idx, "Sniper_Note_Globale"] = str(note) if note else "N/A"
+                            df.at[idx, "Sniper_Volume_Avis"] = str(count) if count else "N/A"
+
+                            # Fréquence
+                            freq_text = "N/A"
                             if review_dates:
                                 freq_text = calculate_frequency(review_dates)
-                                st.metric("Fréquence des avis", freq_text)
-                        with col_resp:
-                            st.metric("Taux de réponse du praticien", response_text)
+                            df.at[idx, "Sniper_Frequence"] = freq_text
 
-                        st.subheader("📋 Audit Technique GMB")
-                        gmb_df = pd.DataFrame({
-                            "Indicateur": ["Site Web", "Horaires complets", "Numéro de téléphone", "Spécialité / Catégorie principale", "Lien de prise de rendez-vous (ex: Doctolib)", "Nom de la fiche"],
-                            "Statut": [
-                                gmb_data.get("website", "Absent"),
-                                gmb_data.get("hours", "Incomplets ou absents"),
-                                gmb_data.get("phone", "Absent"),
-                                gmb_data.get("category", "Générique"),
-                                gmb_data.get("appointment", "Absent"),
-                                gmb_data.get("title", "Nom propre")
-                            ]
-                        })
-                        st.table(gmb_df)
+                            # Taux de réponse
+                            if review_responses:
+                                nb_responses = sum(review_responses)
+                                total_extracted = len(review_responses)
+                                response_rate = (nb_responses / total_extracted) * 100
+                                response_text = f"Oui ({response_rate:.0f}%)" if response_rate > 0 else "Non"
+                            else:
+                                response_text = "N/A"
+                            df.at[idx, "Sniper_Taux_Reponse"] = response_text
 
-                        st.subheader("📊 Analyse des Tendances")
+                            # Pitch / Pain Point
+                            pitch = generate_pitch(reviews, note=note, count=count)
+                            pitch_clean = pitch.replace('\n', ' ').replace('\r', '')
+                            df.at[idx, "Sniper_Top_Pain_Point"] = pitch_clean
 
-                        note = selected_row[note_col] if note_col and pd.notna(selected_row[note_col]) else None
-                        count = selected_row[avis_col] if avis_col and pd.notna(selected_row[avis_col]) else None
+                            # Audit Resume
+                            audit_resume = f"Site: {gmb_data.get('website', 'N/A')} | Horaires: {gmb_data.get('hours', 'N/A')} | Tel: {gmb_data.get('phone', 'N/A')} | Cat: {gmb_data.get('category', 'N/A')} | RDV: {gmb_data.get('appointment', 'N/A')} | Nom: {gmb_data.get('title', 'N/A')}"
+                            df.at[idx, "Sniper_Resume_Audit"] = audit_resume.replace('\n', ' ').replace('\r', '')
 
-                        pitch = generate_pitch(reviews, note=note, count=count)
-                        st.info(pitch)
+                        except Exception as e:
+                            df.at[idx, "Sniper_Note_Globale"] = "Erreur"
+                            df.at[idx, "Sniper_Volume_Avis"] = "Erreur"
+                            df.at[idx, "Sniper_Frequence"] = "Erreur"
+                            df.at[idx, "Sniper_Taux_Reponse"] = "Erreur"
+                            df.at[idx, "Sniper_Top_Pain_Point"] = "Erreur"
+                            df.at[idx, "Sniper_Resume_Audit"] = "Erreur"
+                            # Continue to next prospect
 
-                    except Exception as e:
-                        st.error(f"Une erreur s'est produite lors de l'extraction via Playwright : {str(e)}")
+                        progress_bar.progress(i / total_rows)
+                        time.sleep(0.5)
+
+                    status_text.text("Traitement terminé !")
+                    st.success("Analyse en masse terminée !")
+
+                    csv_export = df.to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(
+                        label="📥 Télécharger les résultats (CSV)",
+                        data=csv_export,
+                        file_name="resultats_analyse_masse.csv",
+                        mime="text/csv"
+                    )
 
     except Exception as e:
         st.error(f"Erreur de lecture du fichier CSV : {str(e)}")
