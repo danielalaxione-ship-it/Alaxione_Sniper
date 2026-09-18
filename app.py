@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 from playwright.sync_api import sync_playwright
 import time
 import subprocess
