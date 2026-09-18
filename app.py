@@ -12,161 +12,197 @@ def extract_reviews(url):
     query['hl'] = ['fr']
     query['gl'] = ['FR']
     new_query = urllib.parse.urlencode(query, doseq=True)
-    url = parsed._replace(query=new_query).geturl()
+    base_url = parsed._replace(query=new_query).geturl()
 
-    reviews_text = []
-    reviews_dates = []
-    reviews_responses = []
-    gmb_data = {
-        "website": "Absent",
-        "hours": "Incomplets ou absents",
-        "phone": "Absent",
-        "category": "Générique",
-        "appointment": "Absent",
-        "title": "Nom propre"
-    }
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
-        context = browser.new_context(
-            locale="fr-FR",
-            viewport={'width': 1920, 'height': 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
-        page.goto(url)
-        time.sleep(3)
+    max_retries = 3
+    for attempt in range(max_retries):
+        reviews_text = []
+        reviews_dates = []
+        reviews_responses = []
+        gmb_data = {
+            "website": "Absent",
+            "hours": "Incomplets ou absents",
+            "phone": "Absent",
+            "category": "Générique",
+            "appointment": "Absent",
+            "title": "Nom propre"
+        }
 
         try:
-            page.locator('button:has-text("Tout accepter")').first.click(timeout=5000)
-        except:
-            pass
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
+                context = browser.new_context(
+                    locale="fr-FR",
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+                )
+                page = context.new_page()
+                page.goto(base_url, wait_until='domcontentloaded', timeout=60000)
 
-        time.sleep(3)
-
-        # --- GMB Technical Audit Extraction ---
-        try:
-            # 1. Title (Nom de la fiche)
-            title_el = page.locator('h1.DUwDvf')
-            if title_el.count() > 0:
-                title_text = title_el.first.inner_text().strip()
-                if len(title_text.split()) > 4 or "-" in title_text or "|" in title_text:
-                    gmb_data["title"] = "Suroptimisé avec mots-clés"
-                else:
-                    gmb_data["title"] = "Nom propre"
-
-            # 2. Category
-            category_btn = page.locator('button.DkEaL')
-            if category_btn.count() > 0:
-                cat_text = category_btn.first.inner_text().strip()
-                if cat_text:
-                    gmb_data["category"] = "Précisée"
-
-            # 3. Phone
-            phone_btn = page.locator('button[data-tooltip*="téléphone"], button[data-tooltip*="phone"], button[data-item-id^="phone:"]')
-            if phone_btn.count() > 0:
-                gmb_data["phone"] = "Présent"
-
-            # 4. Website
-            website_btn = page.locator('a[data-item-id="authority"]')
-            if website_btn.count() > 0:
-                gmb_data["website"] = "Présent"
-
-            # 5. Appointment link
-            links = page.locator('a')
-            for i in range(links.count()):
                 try:
-                    href = links.nth(i).get_attribute("href")
-                    if href and any(domain in href.lower() for domain in ["doctolib", "maiia", "keldoc", "rdv", "rendez-vous"]):
-                        gmb_data["appointment"] = "Présent"
-                        break
+                    page.locator('button:has-text("Tout accepter"), button:has-text("Accept all")').first.click(timeout=3000)
                 except:
                     pass
 
-            # 6. Hours
-            if page.locator('div[aria-label*="ouvert"]').count() > 0 or \
-               page.locator('div[aria-label*="fermé"]').count() > 0 or \
-               page.locator('div[aria-label*="Horaires"]').count() > 0 or \
-               page.locator('div.OqCjIf[data-item-id="oh"]').count() > 0:
-                gmb_data["hours"] = "Complets"
-        except:
-            pass
-        # ----------------------------------------
-
-        try:
-            page.wait_for_selector('button[role="tab"]', timeout=5000)
-            tabs = page.locator('button[role="tab"]')
-            for i in range(tabs.count()):
-                try:
-                    text = tabs.nth(i).inner_text().strip().lower()
-                    if 'avis' in text or 'reviews' in text:
-                        tabs.nth(i).click()
-                        break
-                except:
-                    pass
-
-            time.sleep(3)
-
-            for _ in range(5):
-                try:
-                    page.evaluate('''
-                        () => {
-                            const container = document.querySelector('div.m6QErb.DxyBCb');
-                            if (container) {
-                                container.scrollTop = container.scrollHeight;
-                                container.dispatchEvent(new Event('scroll'));
-                            } else {
-                                let elements2 = document.querySelectorAll('.m6QErb');
-                                for (let el of elements2) {
-                                    if (el.scrollHeight > el.clientHeight) {
-                                        el.scrollTop = el.scrollHeight;
-                                        el.dispatchEvent(new Event('scroll'));
-                                    }
-                                }
-                            }
-                        }
-                    ''')
-                except:
-                    pass
                 time.sleep(2)
 
-            try:
-                more_buttons = page.locator('button.w8nwRe.kyuRq')
-                for i in range(more_buttons.count()):
-                    more_buttons.nth(i).click()
-                    time.sleep(0.5)
-            except:
+                # --- GMB Technical Audit Extraction ---
+                try:
+                    # 1. Title (Nom de la fiche)
+                    title_el = page.locator('h1.DUwDvf')
+                    if title_el.count() > 0:
+                        title_text = title_el.first.inner_text().strip()
+                        if len(title_text.split()) > 4 or "-" in title_text or "|" in title_text:
+                            gmb_data["title"] = "Suroptimisé avec mots-clés"
+                        else:
+                            gmb_data["title"] = "Nom propre"
+
+                    # 2. Category
+                    category_btn = page.locator('button.DkEaL')
+                    if category_btn.count() > 0:
+                        cat_text = category_btn.first.inner_text().strip()
+                        if cat_text:
+                            gmb_data["category"] = "Précisée"
+
+                    # 3. Phone
+                    phone_btn = page.locator('button[data-tooltip*="téléphone"], button[data-tooltip*="phone"], button[data-item-id^="phone:"]')
+                    if phone_btn.count() > 0:
+                        gmb_data["phone"] = "Présent"
+
+                    # 4. Website
+                    website_btn = page.locator('a[data-item-id="authority"]')
+                    if website_btn.count() > 0:
+                        gmb_data["website"] = "Présent"
+
+                    # 5. Appointment link
+                    links = page.locator('a')
+                    for i in range(links.count()):
+                        try:
+                            href = links.nth(i).get_attribute("href")
+                            if href and any(domain in href.lower() for domain in ["doctolib", "maiia", "keldoc", "rdv", "rendez-vous"]):
+                                gmb_data["appointment"] = "Présent"
+                                break
+                        except:
+                            pass
+
+                    # 6. Hours
+                    if page.locator('div[aria-label*="ouvert"]').count() > 0 or \
+                       page.locator('div[aria-label*="fermé"]').count() > 0 or \
+                       page.locator('div[aria-label*="Horaires"]').count() > 0 or \
+                       page.locator('div.OqCjIf[data-item-id="oh"]').count() > 0:
+                        gmb_data["hours"] = "Complets"
+                except:
+                    pass
+                # ----------------------------------------
+
+                try:
+                    # 1. Search for tab
+                    tabs = page.locator('button[role="tab"]').all()
+                    found_avis = False
+                    for t in tabs:
+                        if 'avis' in t.inner_text().lower() or 'reviews' in t.inner_text().lower():
+                            t.click()
+                            found_avis = True
+                            time.sleep(2)
+                            break
+
+                    # 2. Search for Plus d'avis button
+                    if not found_avis:
+                        more = page.locator('button:has-text("Plus d\'avis")')
+                        if more.count() > 0:
+                            more.first.evaluate("node => node.click()")
+                            found_avis = True
+                            time.sleep(2)
+
+                    # 3. Fallback to tab index
+                    if not found_avis:
+                        try:
+                            tab_fallback = page.locator('button[role="tab"][data-tab-index="1"], button[role="tab"][data-tab-index="2"]')
+                            if tab_fallback.count() > 0:
+                                tab_fallback.first.click(timeout=3000)
+                                time.sleep(2)
+                        except:
+                            pass
+
+                    # Scroll dans les avis 2 ou 3 fois pour charger le texte
+                    for _ in range(3):
+                        try:
+                            # On cible le dernier avis pour forcer le défilement et charger les suivants
+                            reviews_loc = page.locator('.jftiEf')
+                            if reviews_loc.count() > 0:
+                                reviews_loc.last.scroll_into_view_if_needed(timeout=1000)
+                        except:
+                            pass
+
+                        try:
+                            # Fallback JS pour forcer le défilement des conteneurs
+                            page.evaluate('''
+                                () => {
+                                    let mainDivs = document.querySelectorAll('div[role="main"]');
+                                    mainDivs.forEach(d => d.scrollBy(0, 1000));
+
+                                    let elements = document.querySelectorAll('.m6QErb');
+                                    for (let el of elements) {
+                                        if (el.scrollHeight > el.clientHeight) {
+                                            el.scrollTop = el.scrollHeight;
+                                            el.dispatchEvent(new Event('scroll'));
+                                        }
+                                    }
+                                }
+                            ''')
+                        except:
+                            pass
+                        time.sleep(2)
+
+                    try:
+                        more_buttons = page.locator('button.w8nwRe.kyuRq')
+                        for i in range(more_buttons.count()):
+                            # Use evaluate click to bypass interception
+                            more_buttons.nth(i).evaluate("node => node.click()")
+                            time.sleep(0.5)
+                    except:
+                        pass
+                except Exception as e:
+                    print("Erreur globale sur l'extraction Playwright :", e)
+                    pass
+
+                try:
+                    review_elements = page.query_selector_all('.jftiEf')
+                    for el in review_elements[:20]:
+                        text_el = el.query_selector('.wiI7pd')
+                        date_el = el.query_selector('.rsqaWe')
+
+                        response_el = el.query_selector('.CDe7pd')
+                        has_response = False
+                        if response_el:
+                            has_response = True
+                        else:
+                            inner = el.inner_text()
+                            if "Réponse du propriétaire" in inner or "Réponse de" in inner:
+                                has_response = True
+
+                        if text_el:
+                            reviews_text.append(text_el.inner_text())
+                            if date_el:
+                                reviews_dates.append(date_el.inner_text())
+                            else:
+                                reviews_dates.append("Date inconnue")
+                            reviews_responses.append(has_response)
+                except Exception as e:
+                    pass
+
+                browser.close()
+
+            # Check if extraction was successful to break the retry loop
+            if len(reviews_text) > 0:
+                break
+
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
                 pass
 
-            review_elements = page.query_selector_all('.jftiEf')
-            for el in review_elements[:20]:
-                text_el = el.query_selector('.wiI7pd')
-                date_el = el.query_selector('.rsqaWe')
-
-                response_el = el.query_selector('.CDe7pd')
-                has_response = False
-                if response_el:
-                    has_response = True
-                else:
-                    inner = el.inner_text()
-                    if "Réponse du propriétaire" in inner or "Réponse de" in inner:
-                        has_response = True
-
-                if text_el:
-                    reviews_text.append(text_el.inner_text())
-                    if date_el:
-                        reviews_dates.append(date_el.inner_text())
-                    else:
-                        reviews_dates.append("Date inconnue")
-                    reviews_responses.append(has_response)
-        except Exception as e:
-            # En cas de problème avec le panneau des avis (aucun avis ou structure changée),
-            # on l'ignore silencieusement pour retourner des listes vides
-            pass
-
-        browser.close()
     return reviews_text, reviews_dates, reviews_responses, gmb_data
-
-import re
 
 def calculate_frequency(dates_str):
     max_months = 0
