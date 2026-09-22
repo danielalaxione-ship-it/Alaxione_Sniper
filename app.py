@@ -468,21 +468,32 @@ if uploaded_file is not None:
 
                     total_rows = len(df)
 
-                    with sync_playwright() as p:
-                        browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
-                        try:
-                            for idx, row in df.iterrows():
-                                i = idx + 1
-                                prospect_name = row[name_col] if name_col and pd.notna(row[name_col]) else f"Index {idx}"
-                                status_text.text(f"Traitement : {prospect_name} ({i}/{total_rows})...")
-                                st.write(f"Traitement de {prospect_name} ({i}/{total_rows})...")
+                    p = sync_playwright().start()
+                    browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
+                    download_placeholder = st.empty()
 
-                                url = row['URL_Google_Maps']
-                                if pd.isna(url) or not isinstance(url, str):
-                                    df.at[idx, "Sniper_Resume_Audit"] = "Erreur : URL manquante ou invalide"
-                                    progress_bar.progress(i / total_rows)
-                                    continue
+                    try:
+                        for idx, row in df.iterrows():
+                            i = idx + 1
 
+                            # Hard-Reset du Navigateur
+                            if i > 1 and (i - 1) % 10 == 0:
+                                try:
+                                    browser.close()
+                                    p.stop()
+                                except:
+                                    pass
+                                p = sync_playwright().start()
+                                browser = p.chromium.launch(headless=True, args=['--lang=fr-FR', '--window-size=1920,1080'])
+
+                            prospect_name = row[name_col] if name_col and pd.notna(row[name_col]) else f"Index {idx}"
+                            status_text.text(f"Traitement : {prospect_name} ({i}/{total_rows})...")
+                            st.write(f"Traitement de {prospect_name} ({i}/{total_rows})...")
+
+                            url = row['URL_Google_Maps']
+                            if pd.isna(url) or not isinstance(url, str):
+                                df.at[idx, "Sniper_Resume_Audit"] = "Erreur : URL manquante ou invalide"
+                            else:
                                 try:
                                     reviews, review_dates, review_responses, gmb_data = extract_reviews(url, browser=browser)
 
@@ -524,23 +535,44 @@ if uploaded_file is not None:
                                     df.at[idx, "Sniper_Taux_Reponse"] = "Erreur"
                                     df.at[idx, "Sniper_Top_Pain_Point"] = "Erreur"
                                     df.at[idx, "Sniper_Resume_Audit"] = "Erreur"
-                                    # Continue to next prospect
 
-                                progress_bar.progress(i / total_rows)
-                                time.sleep(0.5)
-                        finally:
+                            # Sauvegarde continue et téléchargement dynamique
+                            csv_export = df.to_csv(index=False, encoding='utf-8-sig')
+                            with open("resultats_live.csv", "w", encoding='utf-8-sig') as f:
+                                f.write(csv_export)
+
+                            download_placeholder.empty()
+                            with download_placeholder:
+                                st.download_button(
+                                    label=f"📥 Télécharger les résultats partiels ({i}/{total_rows})",
+                                    data=csv_export,
+                                    file_name="resultats_analyse_masse.csv",
+                                    mime="text/csv",
+                                    key=f"download_{i}"
+                                )
+
+                            progress_bar.progress(i / total_rows)
+                            time.sleep(0.5)
+                    finally:
+                        try:
                             browser.close()
+                            p.stop()
+                        except:
+                            pass
 
                     status_text.text("Traitement terminé !")
                     st.success("Analyse en masse terminée !")
 
+                    download_placeholder.empty()
                     csv_export = df.to_csv(index=False, encoding='utf-8-sig')
-                    st.download_button(
-                        label="📥 Télécharger les résultats (CSV)",
-                        data=csv_export,
-                        file_name="resultats_analyse_masse.csv",
-                        mime="text/csv"
-                    )
+                    with download_placeholder:
+                        st.download_button(
+                            label="📥 Télécharger les résultats (CSV)",
+                            data=csv_export,
+                            file_name="resultats_analyse_masse.csv",
+                            mime="text/csv",
+                            key="download_final"
+                        )
 
     except Exception as e:
         st.error(f"Erreur de lecture du fichier CSV : {str(e)}")
