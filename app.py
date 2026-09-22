@@ -207,7 +207,10 @@ def extract_reviews(url, browser=None):
 
             # Check if extraction was successful to break the retry loop
             if len(reviews_text) > 0:
+                print(f"Succès : {len(reviews_text)} avis textuels extraits.")
                 break
+            else:
+                print("Aucun avis extrait sur cette tentative.")
 
         except Exception as e:
             print(f"Attempt {attempt + 1} failed: {e}")
@@ -265,13 +268,13 @@ def generate_pitch(reviews_list, note=None, count=None):
     pitch = "Analyse des Tendances :\n\n"
 
     if note and count:
-        pitch += f"Avec une note de {note}/5 sur {count} avis, voici l'analyse des points de douleur soulevés par vos patients.\n\n"
+        pitch += f"Avec une note de {note}/5 sur {count} avis, voici l'analyse des points de douleur soulevés par les patients du praticien.\n\n"
     elif note:
-        pitch += f"Avec une note de {note}/5, voici l'analyse des points de douleur soulevés par vos patients.\n\n"
+        pitch += f"Avec une note de {note}/5, voici l'analyse des points de douleur soulevés par les patients du praticien.\n\n"
     elif count:
-        pitch += f"Avec {count} avis au total, voici l'analyse des points de douleur soulevés par vos patients.\n\n"
+        pitch += f"Avec {count} avis au total, voici l'analyse des points de douleur soulevés par les patients du praticien.\n\n"
     else:
-        pitch += f"Voici l'analyse des points de douleur soulevés par vos patients.\n\n"
+        pitch += f"Voici l'analyse des points de douleur soulevés par les patients du praticien.\n\n"
 
     if not reviews_list:
         pitch += "Aucun avis textuel n'a pu être extrait pour l'analyse.\n"
@@ -329,6 +332,9 @@ def generate_pitch(reviews_list, note=None, count=None):
         pct = int((leave_issues_count / total_reviews) * 100)
         pitch += f"- **{pct}%** des avis signalent des difficultés lors des périodes de congés ou d'absence.\n"
         stats_found = True
+
+    if not stats_found:
+        pitch += "Aucune tendance de point de douleur majeure n'a été détectée dans les avis extraits.\n"
 
     pitch += "\n"
 
